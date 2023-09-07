@@ -1,0 +1,110 @@
+pipeline {
+    agent{
+        label "any"
+    }
+    triggers{
+            webhook('<your-webhook-endpoint>' , triggerOnPush: true )
+    }
+    environment{
+        imageName = "---- your image name ----"
+        registryCredentials = "nexus"
+        registry = "localhost:8085"
+        dockerImage = ''
+    }
+    stages{
+        stage("Clone Git Repository"){
+            steps{
+                echo "Cloning Git Repository"
+                git(
+                    url: " ------GIT REPO URL------"
+                    branch: "master"
+                    changelog: true
+                    poll: true
+                )
+            }
+           
+        }
+        stage("Set Up Enviroment"){
+            steps{
+                script {
+                    def jdkTool = tool name: 'JDK11' , type: 'jdk'
+                    def mavenTool = tool name: 'Maven' , type: 'maven'
+                    env.JAVA_HOME = "${jdkTool}/bin:${mavenTool}/bin:${env.PATH}"
+
+                }
+            }
+           
+        }
+        stage("Build"){
+            steps{
+                sh 'java -version'
+                sh 'mvn -version'
+
+
+                sh 'mvn clean install'
+            }
+           
+        }
+        stage("Unit Test"){
+            steps{
+                sh "${tool('Maven)}/bin/mvn test"
+            }
+           
+        }
+        stage("Static Code Analysis"){
+            steps {
+                script {
+                    def scannerHome = tool 'SonarQubeScanner' // Use the configured sonarQube Scanner tool
+                    withSonarQubeEnv('YOUR_SONARQUBE_SEBER_ID')
+                     sh "${scannerHome}/bin/sonar-scanner"
+                }
+            }
+        }
+        stage("Quality Gate"){
+            steps {
+                script {
+                    def qualityGateStatus = waitForQualityGate()
+                    if (qualityGateStatus != 'OK')
+                       currentBuild.result = 'FAILURE'
+                       error "Quality Gate did not pass. Check SonarQube dashboard for details."
+                }
+            }
+        }
+        stage("Build Docker Image") {
+            steps {
+                script {
+                    dockerImage = docker.build imageName
+                }
+            }
+        }
+        stage("Push Image to Nexus Repository") {
+            steps {
+                script {
+                    docker.withRegistry = ('https://'+registry, registryCredentials)
+                       { 
+                        dockerImage.push('latest')  
+                        }
+                         
+                    }
+                }
+           }
+    }
+    post{
+        success{
+            emailext(
+                subject: "Build Successful: ${currentBuild.fullDIsplayName}",
+                body: "The build was successful. You can access the build at ${BUILD_URL}",
+                to: 'sainishubham416@gmail.com',
+                attachLog: true 
+            )
+        }
+        failure{
+            emailext(
+                subject: "Build Failed: ${currentBuild.fullDIsplayName}",
+                body: "The build failed. You can access the build at ${BUILD_URL}",
+                to: 'sainishubham416@gmail.com',
+                attachLog: true  
+            )
+           }
+    }
+}
